@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+warehouse.duckdb
+generated_dags/
+.pytest_cache/
+.env

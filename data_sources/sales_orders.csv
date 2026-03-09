@@ -1,0 +1,6 @@
+order_id,customer_id,amount,created_at,status
+1001,C001,150.50,2026-03-01T10:00:00,completed
+1002,C002,80.00,2026-03-01T10:30:00,completed
+1003,C003,42.75,2026-03-01T11:00:00,cancelled
+1004,C001,220.10,2026-03-02T09:10:00,completed
+1005,C004,15.99,2026-03-02T12:45:00,completed
