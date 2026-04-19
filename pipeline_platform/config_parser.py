@@ -48,6 +48,12 @@ class QualityChecksConfig:
 
 
 @dataclass
+class NotifyConfig:
+    on_failure: bool = False
+    slack_webhook: str | None = None
+
+
+@dataclass
 class PipelineConfig:
     pipeline_name: str
     owner: str
@@ -58,6 +64,7 @@ class PipelineConfig:
     runtime_parameters: dict[str, Any] = field(default_factory=dict)
     transform: TransformConfig = field(default_factory=TransformConfig)
     quality_checks: QualityChecksConfig = field(default_factory=QualityChecksConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
 
 
 def load_pipeline_config(path: str) -> PipelineConfig:
@@ -82,6 +89,13 @@ def load_pipeline_config(path: str) -> PipelineConfig:
         ],
     )
 
+    # Parse notify section if present
+    notify_raw = raw.get("notify", {})
+    notify = NotifyConfig(
+        on_failure=notify_raw.get("on_failure", False),
+        slack_webhook=notify_raw.get("slack_webhook"),
+    )
+
     return PipelineConfig(
         pipeline_name=raw["pipeline_name"],
         owner=raw["owner"],
@@ -92,4 +106,5 @@ def load_pipeline_config(path: str) -> PipelineConfig:
         runtime_parameters=raw.get("runtime_parameters", {}),
         transform=TransformConfig(**raw.get("transform", {})),
         quality_checks=quality_checks,
+        notify=notify,
     )
