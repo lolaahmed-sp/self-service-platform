@@ -48,34 +48,48 @@ class PipelineRegistry:
     def register_pipeline(self, config: PipelineConfig) -> None:
         source_identifier = config.source.path or config.source.endpoint or "unknown"
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+
         self.warehouse.execute(
-            f"""
-            INSERT OR REPLACE INTO metadata_pipelines VALUES (
-                '{config.pipeline_name}',
-                '{config.owner}',
-                '{config.source.type}',
-                '{source_identifier}',
-                '{config.destination.schema}',
-                '{config.destination.table}',
-                '{config.schedule.cron}',
-                '{config.load_mode}',
-                TRUE,
-                COALESCE((SELECT created_at FROM metadata_pipelines WHERE pipeline_name = '{config.pipeline_name}'), TIMESTAMP '{now}'),
-                TIMESTAMP '{now}',
-                COALESCE((SELECT last_run_at FROM metadata_pipelines WHERE pipeline_name = '{config.pipeline_name}'), NULL),
-                COALESCE((SELECT last_status FROM metadata_pipelines WHERE pipeline_name = '{config.pipeline_name}'), NULL)
-            )
             """
+            INSERT INTO metadata_pipelines (
+                pipeline_name, owner, source_type, source_identifier,
+                destination_schema, destination_table, schedule, load_mode,
+                is_active, created_at, updated_at, last_run_at, last_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, NULL, NULL)
+            ON CONFLICT (pipeline_name) DO UPDATE SET
+                owner              = excluded.owner,
+                source_type        = excluded.source_type,
+                source_identifier  = excluded.source_identifier,
+                destination_schema = excluded.destination_schema,
+                destination_table  = excluded.destination_table,
+                schedule           = excluded.schedule,
+                load_mode          = excluded.load_mode,
+                is_active          = TRUE,
+                updated_at         = excluded.updated_at
+            """,
+            [
+                config.pipeline_name,
+                config.owner,
+                config.source.type,
+                source_identifier,
+                config.destination.schema,
+                config.destination.table,
+                config.schedule.cron,
+                config.load_mode,
+                now,  # created_at
+                now,  # updated_at
+            ],
         )
 
     def update_last_run_status(self, pipeline_name: str, status: str) -> None:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         self.warehouse.execute(
-            f"""
-            UPDATE metadata_pipelines
-            SET last_run_at = TIMESTAMP '{now}',
-                last_status = '{status}',
-                updated_at = TIMESTAMP '{now}'
-            WHERE pipeline_name = '{pipeline_name}'
             """
+            UPDATE metadata_pipelines
+            SET last_run_at = ?,
+                last_status = ?,
+                updated_at  = ?
+            WHERE pipeline_name = ?
+            """,
+            [now, status, now, pipeline_name],
         )

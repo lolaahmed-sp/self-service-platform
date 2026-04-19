@@ -34,6 +34,26 @@ class TransformConfig:
 
 
 @dataclass
+class QualityCheckConfig:
+    name: str
+    column: str
+    rule: str
+    value: float | None = None
+
+
+@dataclass
+class QualityChecksConfig:
+    enabled: bool = False
+    checks: list = field(default_factory=list)
+
+
+@dataclass
+class NotifyConfig:
+    on_failure: bool = False
+    slack_webhook: str | None = None
+
+
+@dataclass
 class PipelineConfig:
     pipeline_name: str
     owner: str
@@ -43,6 +63,8 @@ class PipelineConfig:
     load_mode: str
     runtime_parameters: dict[str, Any] = field(default_factory=dict)
     transform: TransformConfig = field(default_factory=TransformConfig)
+    quality_checks: QualityChecksConfig = field(default_factory=QualityChecksConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
 
 
 def load_pipeline_config(path: str) -> PipelineConfig:
@@ -51,6 +73,28 @@ def load_pipeline_config(path: str) -> PipelineConfig:
         raw = yaml.safe_load(file)
 
     validate_config_dict(raw)
+
+    # Parse quality_checks section if present
+    qc_raw = raw.get("quality_checks", {})
+    quality_checks = QualityChecksConfig(
+        enabled=qc_raw.get("enabled", False),
+        checks=[
+            QualityCheckConfig(
+                name=c["name"],
+                column=c["column"],
+                rule=c["rule"],
+                value=c.get("value"),
+            )
+            for c in qc_raw.get("checks", [])
+        ],
+    )
+
+    # Parse notify section if present
+    notify_raw = raw.get("notify", {})
+    notify = NotifyConfig(
+        on_failure=notify_raw.get("on_failure", False),
+        slack_webhook=notify_raw.get("slack_webhook"),
+    )
 
     return PipelineConfig(
         pipeline_name=raw["pipeline_name"],
@@ -61,4 +105,6 @@ def load_pipeline_config(path: str) -> PipelineConfig:
         load_mode=raw["load_mode"],
         runtime_parameters=raw.get("runtime_parameters", {}),
         transform=TransformConfig(**raw.get("transform", {})),
+        quality_checks=quality_checks,
+        notify=notify,
     )

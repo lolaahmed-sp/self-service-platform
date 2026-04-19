@@ -46,6 +46,12 @@ class PipelineExecutor:
             dataframe = self._extract(config)
             rows_extracted = len(dataframe)
 
+            # Data quality checks (Task 7)
+
+            from pipeline_platform.quality.checker import run_quality_checks
+
+            run_quality_checks(dataframe, config.quality_checks)
+
             # Schema validation (Task 6)
 
             if not force:
@@ -107,6 +113,19 @@ class PipelineExecutor:
                 error_message=str(exc),
             )
             self.registry.update_last_run_status(config.pipeline_name, "FAILED")
+
+            # Failure notification (Task 10)
+            if config.notify and config.notify.on_failure:
+                from pipeline_platform.notifications.slack import (
+                    send_failure_notification,
+                )
+
+                send_failure_notification(
+                    webhook_url=config.notify.slack_webhook,
+                    pipeline_name=config.pipeline_name,
+                    error_message=str(exc),
+                    run_id=run_id,
+                )
 
             return {
                 "status": "failed",
