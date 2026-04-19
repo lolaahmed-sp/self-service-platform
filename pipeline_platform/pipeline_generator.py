@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 
 from pipeline_platform.config_parser import PipelineConfig
+from pipeline_platform.errors import SchemaValidationError
 from pipeline_platform.metadata.registry import PipelineRegistry
 from pipeline_platform.metadata.run_logger import RunLogger
 from pipeline_platform.orchestration.dag_template import render_dag_file
@@ -21,7 +22,16 @@ class PipelineExecutor:
         self.run_logger = RunLogger(warehouse)
         self.csv_ingestor = CSVIngestor()
 
-    def execute(self, config: PipelineConfig) -> None:
+    def execute(
+        self,
+        config: PipelineConfig,
+        force: bool = False,
+    ) -> dict:
+        """
+        Run a full pipeline and return a result dict.
+        Never raises — failures are caught, logged, and returned as
+        {"status": "failed", "error_message": "..."}.
+        """
         self.registry.ensure_metadata_tables()
         self.registry.register_pipeline(config)
 
@@ -31,10 +41,32 @@ class PipelineExecutor:
         rows_loaded = 0
 
         try:
+            # Extract
             dataframe = self._extract(config)
             rows_extracted = len(dataframe)
+
+            # Schema validation (Task 6)
+            if not force:
+                drift = self.warehouse.compare_schema(config.pipeline_name, dataframe)
+                if drift:
+                    raise SchemaValidationError(
+                        "Schema drift detected:\n"
+                        + "\n".join(f"  - {d}" for d in drift)
+                    )
+
+            # Store schema after validation passes
+            self.warehouse.store_schema(config.pipeline_name, dataframe)
+
+            # Load
             rows_loaded = self._load(config, dataframe)
+
+            # Transform (Task 2)
+            if config.transform and config.transform.sql:
+                print(f"[Transform] Running: {config.transform.sql}")
+                self.warehouse.execute_sql_file(config.transform.sql)
+
             duration = round(time.time() - start, 2)
+
             self.run_logger.log_run(
                 run_id=run_id,
                 pipeline_name=config.pipeline_name,
@@ -44,9 +76,19 @@ class PipelineExecutor:
                 execution_time_seconds=duration,
                 error_message=None,
             )
+
             self.registry.update_last_run_status(config.pipeline_name, "SUCCESS")
+            return {
+                "status": "success",
+                "rows_extracted": rows_extracted,
+                "rows_loaded": rows_loaded,
+                "execution_time_seconds": duration,
+                "error_message": None,
+            }
+
         except Exception as exc:  # noqa: BLE001
             duration = round(time.time() - start, 2)
+
             self.run_logger.log_run(
                 run_id=run_id,
                 pipeline_name=config.pipeline_name,
@@ -57,7 +99,15 @@ class PipelineExecutor:
                 error_message=str(exc),
             )
             self.registry.update_last_run_status(config.pipeline_name, "FAILED")
-            raise
+
+            # Return failure dict - do NOT re-raise, since this is meant to be called from a CLI where we want to catch and print errors.
+            return {
+                "status": "failed",
+                "rows_extracted": rows_extracted,
+                "rows_loaded": rows_loaded,
+                "execution_time_seconds": duration,
+                "error_message": str(exc),
+            }
 
     def _extract(self, config: PipelineConfig) -> pd.DataFrame:
         if config.source.type == "csv":
@@ -75,7 +125,6 @@ class PipelineExecutor:
     @staticmethod
     def _physical_table_name(config: PipelineConfig) -> str:
         return f"{config.destination.schema}_{config.destination.table}"
-
 
 
 def generate_dag_file(config: PipelineConfig) -> str:
