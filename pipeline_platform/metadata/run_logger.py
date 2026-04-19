@@ -20,18 +20,22 @@ class RunLogger:
         error_message: str | None,
     ) -> None:
         timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
-        safe_error = "NULL" if error_message is None else f"'{error_message.replace("'", "''")}'"
         self.warehouse.execute(
-            f"""
-            INSERT INTO metadata_pipeline_runs VALUES (
-                '{run_id}',
-                '{pipeline_name}',
-                TIMESTAMP '{timestamp}',
-                '{status}',
-                {rows_extracted},
-                {rows_loaded},
-                {execution_time_seconds},
-                {safe_error}
-            )
             """
+            INSERT INTO metadata_pipeline_runs (
+                run_id, pipeline_name, run_timestamp, status,
+                rows_extracted, rows_loaded, execution_time_seconds,
+                error_message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                run_id,
+                pipeline_name,
+                timestamp,
+                status,
+                rows_extracted,
+                rows_loaded,
+                execution_time_seconds,
+                error_message,  # None becomes SQL NULL automatically
+            ],
         )
