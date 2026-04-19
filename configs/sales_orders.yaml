@@ -1,14 +1,24 @@
 pipeline_name: sales_orders
 owner: operations_analytics
+
 source:
   type: csv
   path: data_sources/sales_orders.csv
+  incremental_key: created_at
+
 destination:
   schema: raw
   table: sales_orders
+
 schedule:
   cron: "@daily"
+
 load_mode: overwrite
+
 runtime_parameters:
   batch_size: 5000
-transform: {}
+
+
+# Transformation 
+transform:
+  sql: transformations/clean_sales.sql
