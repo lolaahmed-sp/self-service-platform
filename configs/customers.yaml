@@ -12,3 +12,19 @@ load_mode: append
 runtime_parameters:
   batch_size: 1000
 transform: {}
+quality_checks:
+  enabled: true
+  checks:
+    - name: not_null_customer_id
+      column: customer_id
+      rule: not_null
+    - name: not_null_full_name
+      column: full_name
+      rule: not_null
+    - name: unique_customer_id
+      column: customer_id
+      rule: unique
+notify:
+  on_failure: true
+  slack_webhook: "https://hooks.slack.com/services/YOUR/WEBHOOK/HERE"
+  
