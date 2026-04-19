@@ -5,10 +5,7 @@ import sys
 from pathlib import Path
 
 from pipeline_platform.config_parser import load_pipeline_config
-from pipeline_platform.pipeline_generator import (
-    PipelineExecutor,
-    generate_dag_file,
-)
+from pipeline_platform.pipeline_generator import PipelineExecutor, generate_dag_file
 from pipeline_platform.warehouse.duckdb_client import DuckDBWarehouse
 
 
@@ -17,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser("run", help="Run a single pipeline config")
-    run_parser.add_argument("--config", required=True)
+    run_parser.add_argument("--config", required=True, help="Path to YAML config")
     run_parser.add_argument(
         "--force",
         action="store_true",
@@ -28,29 +25,34 @@ def build_parser() -> argparse.ArgumentParser:
     run_all_parser = subparsers.add_parser(
         "run-all", help="Run all pipeline configs in a directory"
     )
-    run_all_parser.add_argument("--config-dir", default="configs")
+    run_all_parser.add_argument(
+        "--config-dir", required=True, help="Directory containing YAML configs"
+    )
 
-    gen_parser = subparsers.add_parser(
+    dag_parser = subparsers.add_parser(
         "generate-dag", help="Generate DAG stub from config"
     )
-    gen_parser.add_argument("--config", required=True)
+    dag_parser.add_argument("--config", required=True, help="Path to YAML config")
 
     show_parser = subparsers.add_parser(
         "show-table", help="Show table contents from DuckDB"
     )
-    show_parser.add_argument("--table", required=True)
+    show_parser.add_argument("--table", required=True, help="Table name to inspect")
 
     return parser
 
 
-def detect_destination_conflicts(configs) -> None:
-    """Prevent multiple pipelines from writing to the same destination table."""
-    dest_map = {}
-    conflicts = []
+def detect_destination_conflicts(configs: list) -> None:
+    """
+    Scan all configs for shared destination tables.
+    Exits with code 1 and a clear message if any conflict is found.
+    Call this before running any pipelines in run-all.
+    """
+    dest_map: dict[str, str] = {}
+    conflicts: list[str] = []
 
     for cfg in configs:
         dest_key = f"{cfg.destination.schema}.{cfg.destination.table}"
-
         if dest_key in dest_map:
             conflicts.append(
                 f"  '{cfg.pipeline_name}' and '{dest_map[dest_key]}' "
@@ -60,7 +62,7 @@ def detect_destination_conflicts(configs) -> None:
             dest_map[dest_key] = cfg.pipeline_name
 
     if conflicts:
-        print("\n ERROR: Duplicate destination tables detected:\n")
+        print("\nERROR: Duplicate destination tables detected:\n")
         for c in conflicts:
             print(c)
         print("\nFix your configs before running.\n")
@@ -74,69 +76,44 @@ def main() -> None:
     warehouse = DuckDBWarehouse(db_path="warehouse.duckdb")
 
     if args.command == "run":
-        try:
-            config = load_pipeline_config(args.config)
-            executor = PipelineExecutor(warehouse=warehouse)
-
-            result = executor.execute(
-                config,
-                force=getattr(args, "force", False),
-            )
-
-            if result["status"] == "success":
-                print(f"\n Pipeline '{config.pipeline_name}' executed successfully.")
-            else:
-                print(f"\n Pipeline '{config.pipeline_name}' failed:")
-                print(result["error_message"])
-                sys.exit(1)
-
-        except Exception as e:
-            print(f"\n Fatal error: {e}")
+        config = load_pipeline_config(args.config)
+        executor = PipelineExecutor(warehouse=warehouse)
+        result = executor.execute(config, force=getattr(args, "force", False))
+        if result["status"] == "success":
+            print(f"Pipeline '{config.pipeline_name}' executed successfully.")
+        else:
+            print(f"Pipeline '{config.pipeline_name}' failed:")
+            print(result["error_message"])
             sys.exit(1)
 
     elif args.command == "run-all":
-        config_dir = Path(args.config_dir)
-        yaml_files = sorted(config_dir.glob("*.yaml"))
-
+        yaml_files = sorted(Path(args.config_dir).glob("*.yaml"))
         if not yaml_files:
-            print(f"No YAML files found in {config_dir}")
+            print(f"No YAML files found in {args.config_dir}")
             return
 
         configs = [load_pipeline_config(str(p)) for p in yaml_files]
 
-        # Task 8: detect conflicts BEFORE running anything
+        # Task 8: check for conflicts before running any pipelines
         detect_destination_conflicts(configs)
 
         executor = PipelineExecutor(warehouse=warehouse)
-
         for config in configs:
             print(f"\n▶ Running: {config.pipeline_name}")
-
             result = executor.execute(config, force=False)
-
             if result["status"] == "success":
-                print(f" Success: {config.pipeline_name}")
+                print(f"  ✓ {config.pipeline_name}")
             else:
-                print(f" Failed: {config.pipeline_name}")
-                print(result["error_message"])
+                print(f"  ✗ {config.pipeline_name}: {result['error_message']}")
                 sys.exit(1)
 
     elif args.command == "generate-dag":
-        try:
-            config = load_pipeline_config(args.config)
-            output_path = generate_dag_file(config)
-            print(f"Generated DAG file: {output_path}")
-        except Exception as e:
-            print(f" Failed to generate DAG: {e}")
-            sys.exit(1)
+        config = load_pipeline_config(args.config)
+        output_path = generate_dag_file(config)
+        print(f"Generated DAG file: {output_path}")
 
     elif args.command == "show-table":
-        try:
-            df = warehouse.fetch_table(args.table)
-            print(df.to_string(index=False))
-        except Exception as e:
-            print(f" Failed to read table: {e}")
-            sys.exit(1)
+        print(warehouse.fetch_table(args.table).to_string(index=False))
 
 
 if __name__ == "__main__":

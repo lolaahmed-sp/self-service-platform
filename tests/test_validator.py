@@ -18,7 +18,10 @@ def test_validate_accepts_valid_config():
 
 
 def test_validate_rejects_unknown_source_type():
-    config = {**VALID_CONFIG, "source": {"type": "api", "endpoint": "http://example.com/orders"}}
+    config = {
+        **VALID_CONFIG,
+        "source": {"type": "api", "endpoint": "http://example.com/orders"},
+    }
     with pytest.raises(ConfigValidationError):
         validate_config_dict(config)
 
