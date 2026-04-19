@@ -114,6 +114,19 @@ class PipelineExecutor:
             )
             self.registry.update_last_run_status(config.pipeline_name, "FAILED")
 
+            # Failure notification (Task 10)
+            if config.notify and config.notify.on_failure:
+                from pipeline_platform.notifications.slack import (
+                    send_failure_notification,
+                )
+
+                send_failure_notification(
+                    webhook_url=config.notify.slack_webhook,
+                    pipeline_name=config.pipeline_name,
+                    error_message=str(exc),
+                    run_id=run_id,
+                )
+
             return {
                 "status": "failed",
                 "rows_extracted": rows_extracted,
