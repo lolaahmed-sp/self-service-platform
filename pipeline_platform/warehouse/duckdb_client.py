@@ -12,7 +12,7 @@ class DuckDBWarehouse:
     def _connect(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(self.db_path)
 
-    # Core Data Methods
+    # Core data methods
 
     def ensure_table_from_dataframe(
         self, table_name: str, dataframe: pd.DataFrame
@@ -32,10 +32,13 @@ class DuckDBWarehouse:
             conn.register("incoming_df", dataframe)
             if load_mode == "overwrite":
                 conn.execute(f"DELETE FROM {table_name}")
-            conn.execute(f"INSERT INTO {table_name} SELECT * FROM incoming_df")
+            cols = ", ".join(dataframe.columns)
+            conn.execute(
+                f"INSERT INTO {table_name} ({cols}) SELECT {cols} FROM incoming_df"
+            )
         return len(dataframe)
 
-    # Write method (used byregistry + run_logger)
+    # Write method (used by registry + run_logger)
 
     def execute(self, sql: str, params: list | None = None) -> None:
         """Execute a write statement (INSERT, UPDATE, CREATE, DELETE)."""
@@ -45,7 +48,7 @@ class DuckDBWarehouse:
             else:
                 conn.execute(sql)
 
-    # Read method (used by tests + ststus command)
+    # Read method (used by tests + status command)
 
     def query(self, sql: str, params: list | None = None) -> list[dict]:
         """Execute a SELECT and return results as a list of dicts."""
@@ -60,7 +63,7 @@ class DuckDBWarehouse:
         with self._connect() as conn:
             return conn.execute(f"SELECT * FROM {table_name}").fetchdf()
 
-    # SQL Transform method (Task 2)
+    # SQL transform method (Task 2)
 
     def execute_sql_file(self, path: str) -> None:
         """Read a .sql file and execute it against the warehouse."""
@@ -97,7 +100,7 @@ class DuckDBWarehouse:
                     VALUES (?, ?, ?)
                     ON CONFLICT (pipeline_name, column_name)
                     DO UPDATE SET
-                        column_type = excluded.column_type,
+                        column_type = excluded.column_type
                     """,
                     [pipeline_name, col, str(dtype)],
                 )
@@ -119,7 +122,7 @@ class DuckDBWarehouse:
         """
         stored = self.get_stored_schema(pipeline_name)
         if not stored:
-            return []  # first run — nothing to compare against
+            return []
 
         incoming = {col: str(dtype) for col, dtype in df.dtypes.items()}
         errors: list[str] = []
@@ -139,38 +142,45 @@ class DuckDBWarehouse:
 
     # Watermark methods (Task 5)
 
-    def _init_watermark_table(self) -> None:
-        self.execute("""
-            CREATE TABLE IF NOT EXISTS metadata_watermarks (
-                pipeline_name   TEXT,
-                incremental_key TEXT,
-                max_value       TEXT,
-                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (pipeline_name, incremental_key)
-            )
-        """)
-
     def get_watermark(self, pipeline_name: str, key: str):
-        self._init_watermark_table()
-        rows = self.query(
-            "SELECT max_value FROM metadata_watermarks "
-            "WHERE pipeline_name = ? AND incremental_key = ?",
-            [pipeline_name, key],
-        )
-        return rows[0]["max_value"] if rows else None
+        """Return stored watermark value, or None if no watermark exists yet."""
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata_watermarks (
+                    pipeline_name   TEXT,
+                    incremental_key TEXT,
+                    max_value       TEXT,
+                    PRIMARY KEY (pipeline_name, incremental_key)
+                )
+            """)
+            result = conn.execute(
+                """
+                SELECT max_value
+                FROM metadata_watermarks
+                WHERE pipeline_name = ? AND incremental_key = ?
+                """,
+                [pipeline_name, key],
+            ).fetchone()
+        return result[0] if result else None
 
     def update_watermark(self, pipeline_name: str, key: str, value: str) -> None:
-        self._init_watermark_table()
+        """Store or update the watermark for a pipeline + incremental key."""
         with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata_watermarks (
+                    pipeline_name   TEXT,
+                    incremental_key TEXT,
+                    max_value       TEXT,
+                    PRIMARY KEY (pipeline_name, incremental_key)
+                )
+            """)
             conn.execute(
                 """
                 INSERT INTO metadata_watermarks
-                    (pipeline_name, incremental_key, max_value, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    (pipeline_name, incremental_key, max_value)
+                VALUES (?, ?, ?)
                 ON CONFLICT (pipeline_name, incremental_key)
-                DO UPDATE SET
-                    max_value  = excluded.max_value,
-                    updated_at = CURRENT_TIMESTAMP
-            """,
+                DO UPDATE SET max_value = excluded.max_value
+                """,
                 [pipeline_name, key, value],
             )

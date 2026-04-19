@@ -29,7 +29,7 @@ class PipelineExecutor:
     ) -> dict:
         """
         Run a full pipeline and return a result dict.
-        Never raises — failures are caught, logged, and returned as
+        Never raises — all failures are caught, logged, and returned as
         {"status": "failed", "error_message": "..."}.
         """
         self.registry.ensure_metadata_tables()
@@ -42,10 +42,12 @@ class PipelineExecutor:
 
         try:
             # Extract
+
             dataframe = self._extract(config)
             rows_extracted = len(dataframe)
 
             # Schema validation (Task 6)
+
             if not force:
                 drift = self.warehouse.compare_schema(config.pipeline_name, dataframe)
                 if drift:
@@ -58,9 +60,15 @@ class PipelineExecutor:
             self.warehouse.store_schema(config.pipeline_name, dataframe)
 
             # Load
+
             rows_loaded = self._load(config, dataframe)
 
+            # Update watermark after successful load (Task 5)
+            if config.source.incremental_key:
+                self._update_watermark(config, dataframe)
+
             # Transform (Task 2)
+
             if config.transform and config.transform.sql:
                 print(f"[Transform] Running: {config.transform.sql}")
                 self.warehouse.execute_sql_file(config.transform.sql)
@@ -76,8 +84,8 @@ class PipelineExecutor:
                 execution_time_seconds=duration,
                 error_message=None,
             )
-
             self.registry.update_last_run_status(config.pipeline_name, "SUCCESS")
+
             return {
                 "status": "success",
                 "rows_extracted": rows_extracted,
@@ -100,7 +108,6 @@ class PipelineExecutor:
             )
             self.registry.update_last_run_status(config.pipeline_name, "FAILED")
 
-            # Return failure dict - do NOT re-raise, since this is meant to be called from a CLI where we want to catch and print errors.
             return {
                 "status": "failed",
                 "rows_extracted": rows_extracted,
@@ -109,10 +116,55 @@ class PipelineExecutor:
                 "error_message": str(exc),
             }
 
+    # Extract
+
     def _extract(self, config: PipelineConfig) -> pd.DataFrame:
         if config.source.type == "csv":
-            return self.csv_ingestor.read(config.source.path)
+            df = self.csv_ingestor.read(config.source.path)
+
+            # Incremental filter (Task 5)
+            incremental_key = config.source.incremental_key
+            if incremental_key:
+                if incremental_key not in df.columns:
+                    raise ValueError(
+                        f"incremental_key '{incremental_key}' not found "
+                        f"in columns: {list(df.columns)}"
+                    )
+                watermark = self.warehouse.get_watermark(
+                    config.pipeline_name, incremental_key
+                )
+                if watermark:
+                    print(f"[Incremental] Filtering {incremental_key} > {watermark}")
+                    df = df[df[incremental_key].astype(str) > watermark]
+                print(f"[Incremental] {len(df)} rows after watermark filter")
+
+            return df
+
+        if config.source.type == "api":
+            from pipeline_platform.sources.api_ingestor import APIIngestor
+
+            ingestor = APIIngestor(
+                endpoint=config.source.endpoint,
+                auth_env_var=getattr(config.source, "auth_env_var", None),
+            )
+            return ingestor.extract()
+
         raise NotImplementedError(f"Unsupported source type: {config.source.type}")
+
+    # Watermark update (Task 5)
+
+    def _update_watermark(
+        self, config: PipelineConfig, dataframe: pd.DataFrame
+    ) -> None:
+        key = config.source.incremental_key
+        if not key or key not in dataframe.columns or dataframe.empty:
+            return
+        old_value = self.warehouse.get_watermark(config.pipeline_name, key)
+        new_value = str(dataframe[key].max())
+        self.warehouse.update_watermark(config.pipeline_name, key, new_value)
+        print(f"[Watermark] {config.pipeline_name}.{key}: {old_value} → {new_value}")
+
+    # Load
 
     def _load(self, config: PipelineConfig, dataframe: pd.DataFrame) -> int:
         table_name = self._physical_table_name(config)
@@ -122,9 +174,14 @@ class PipelineExecutor:
             load_mode=config.load_mode,
         )
 
+    # Helpers
+
     @staticmethod
     def _physical_table_name(config: PipelineConfig) -> str:
         return f"{config.destination.schema}_{config.destination.table}"
+
+
+# DAG generation
 
 
 def generate_dag_file(config: PipelineConfig) -> str:
