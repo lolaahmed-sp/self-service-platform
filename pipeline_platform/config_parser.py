@@ -14,6 +14,7 @@ class SourceConfig:
     type: str
     path: str | None = None
     endpoint: str | None = None
+    incremental_key: str | None = None
 
 
 @dataclass
@@ -42,7 +43,6 @@ class PipelineConfig:
     load_mode: str
     runtime_parameters: dict[str, Any] = field(default_factory=dict)
     transform: TransformConfig = field(default_factory=TransformConfig)
-
 
 
 def load_pipeline_config(path: str) -> PipelineConfig:
