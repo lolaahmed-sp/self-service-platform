@@ -47,10 +47,7 @@ class PipelineExecutor:
             rows_extracted = len(dataframe)
 
             # Data quality checks (Task 7)
-<<<<<<< HEAD
 
-=======
->>>>>>> task/10-failure-notifications
             from pipeline_platform.quality.checker import run_quality_checks
 
             run_quality_checks(dataframe, config.quality_checks)

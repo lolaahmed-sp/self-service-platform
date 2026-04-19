@@ -82,8 +82,4 @@ def _run_single_check(df: pd.DataFrame, check) -> str | None:
         if invalid > 0:
             return f"{name}: '{column}' has {invalid} invalid timestamp(s)"
 
-<<<<<<< HEAD
     return None  # check passed
-=======
-    return None
->>>>>>> task/10-failure-notifications
