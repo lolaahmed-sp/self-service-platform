@@ -5,3 +5,5 @@ warehouse.duckdb
 generated_dags/
 .pytest_cache/
 .env
+generated_dags/*.py
+warehouse.duckdb
