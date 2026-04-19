@@ -46,6 +46,11 @@ class PipelineExecutor:
             dataframe = self._extract(config)
             rows_extracted = len(dataframe)
 
+            # Data quality checks (Task 7)
+            from pipeline_platform.quality.checker import run_quality_checks
+
+            run_quality_checks(dataframe, config.quality_checks)
+
             # Schema validation (Task 6)
 
             if not force:

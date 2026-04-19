@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     show_parser.add_argument("--table", required=True, help="Table name to inspect")
 
+    subparsers.add_parser(
+        "status",
+        help="Show a health summary of all registered pipelines",
+    )
+
     return parser
 
 
@@ -67,6 +72,84 @@ def detect_destination_conflicts(configs: list) -> None:
             print(c)
         print("\nFix your configs before running.\n")
         sys.exit(1)
+
+
+def _print_status(warehouse: DuckDBWarehouse) -> None:
+    """Print a human-readable health summary of all registered pipelines."""
+    try:
+        pipelines = warehouse.query(
+            "SELECT * FROM metadata_pipelines ORDER BY pipeline_name"
+        )
+    except Exception:
+        print("No pipelines registered yet. Run a pipeline first.")
+        return
+
+    if not pipelines:
+        print("No pipelines registered yet. Run a pipeline first.")
+        return
+
+    print(f"\n{'=' * 60}")
+    print(f"  PIPELINE HEALTH SUMMARY  ({len(pipelines)} pipeline(s))")
+    print(f"{'=' * 60}")
+
+    for row in pipelines:
+        name = row["pipeline_name"]
+
+        # Total runs and failure count
+        try:
+            run_stats = warehouse.query(
+                """
+                SELECT
+                    COUNT(*) AS total_runs,
+                    SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failures
+                FROM metadata_pipeline_runs
+                WHERE pipeline_name = ?
+                """,
+                [name],
+            )
+            total = int(run_stats[0]["total_runs"]) if run_stats else 0
+            failures = int(run_stats[0]["failures"] or 0) if run_stats else 0
+        except Exception:
+            total = 0
+            failures = 0
+
+        # Last error message if most recent run was FAILED
+        last_error = None
+        try:
+            error_rows = warehouse.query(
+                """
+                SELECT error_message
+                FROM metadata_pipeline_runs
+                WHERE pipeline_name = ?
+                  AND status = 'FAILED'
+                ORDER BY run_timestamp DESC
+                LIMIT 1
+                """,
+                [name],
+            )
+            if error_rows and error_rows[0]["error_message"]:
+                last_error = str(error_rows[0]["error_message"])[:120]
+        except Exception:
+            pass
+
+        # Status indicator
+        last_status = row.get("last_status") or "NEVER RUN"
+        indicator = (
+            "✓" if last_status == "SUCCESS" else "✗" if last_status == "FAILED" else "—"
+        )
+
+        print(f"\n  {indicator}  {name}")
+        print(f"     Owner    : {row.get('owner', '—')}")
+        print(f"     Schedule : {row.get('schedule', '—')}")
+        print(f"     Load mode: {row.get('load_mode', '—')}")
+        print(f"     Last run : {row.get('last_run_at', 'Never')}")
+        print(f"     Status   : {last_status}")
+        print(f"     Runs     : {total} total  |  {failures} failed")
+
+        if last_error:
+            print(f"     Last err : {last_error}")
+
+    print(f"\n{'=' * 60}\n")
 
 
 def main() -> None:
@@ -114,6 +197,9 @@ def main() -> None:
 
     elif args.command == "show-table":
         print(warehouse.fetch_table(args.table).to_string(index=False))
+
+    elif args.command == "status":
+        _print_status(warehouse)
 
 
 if __name__ == "__main__":
