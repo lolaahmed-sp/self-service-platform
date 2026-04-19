@@ -184,3 +184,48 @@ class DuckDBWarehouse:
                 """,
                 [pipeline_name, key, value],
             )
+
+    # Config versioning (Task 12)
+
+    def track_config_version(
+        self, pipeline_name: str, config_hash: str, config_snapshot: str
+    ) -> bool:
+        """
+        Store a config version if it has changed since the last recorded version.
+        Returns True if a new version was recorded, False if config is unchanged.
+        """
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata_config_history (
+                    id               INTEGER,
+                    pipeline_name    TEXT,
+                    config_hash      TEXT,
+                    config_snapshot  TEXT,
+                    recorded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (pipeline_name, config_hash)
+                )
+            """)
+
+            result = conn.execute(
+                """
+                SELECT config_hash FROM metadata_config_history
+                WHERE pipeline_name = ?
+                ORDER BY recorded_at DESC
+                LIMIT 1
+                """,
+                [pipeline_name],
+            ).fetchone()
+
+            if result and result[0] == config_hash:
+                return False  # config unchanged
+
+            conn.execute(
+                """
+                INSERT INTO metadata_config_history
+                    (pipeline_name, config_hash, config_snapshot)
+                VALUES (?, ?, ?)
+                ON CONFLICT (pipeline_name, config_hash) DO NOTHING
+                """,
+                [pipeline_name, config_hash, config_snapshot],
+            )
+            return True

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +37,12 @@ class PipelineExecutor:
         self.registry.ensure_metadata_tables()
         self.registry.register_pipeline(config)
 
+        # Config versioning (Task 12)
+        config_hash, config_snapshot = self._config_hash(config)
+        self.warehouse.track_config_version(
+            config.pipeline_name, config_hash, config_snapshot
+        )
+
         run_id = str(uuid.uuid4())
         start = time.time()
         rows_extracted = 0
@@ -42,18 +50,15 @@ class PipelineExecutor:
 
         try:
             # Extract
-
             dataframe = self._extract(config)
             rows_extracted = len(dataframe)
 
             # Data quality checks (Task 7)
-
             from pipeline_platform.quality.checker import run_quality_checks
 
             run_quality_checks(dataframe, config.quality_checks)
 
             # Schema validation (Task 6)
-
             if not force:
                 drift = self.warehouse.compare_schema(config.pipeline_name, dataframe)
                 if drift:
@@ -65,8 +70,7 @@ class PipelineExecutor:
             # Store schema after validation passes
             self.warehouse.store_schema(config.pipeline_name, dataframe)
 
-            # Load
-
+            # ── Load
             rows_loaded = self._load(config, dataframe)
 
             # Update watermark after successful load (Task 5)
@@ -74,7 +78,6 @@ class PipelineExecutor:
                 self._update_watermark(config, dataframe)
 
             # Transform (Task 2)
-
             if config.transform and config.transform.sql:
                 print(f"[Transform] Running: {config.transform.sql}")
                 self.warehouse.execute_sql_file(config.transform.sql)
@@ -114,7 +117,7 @@ class PipelineExecutor:
             )
             self.registry.update_last_run_status(config.pipeline_name, "FAILED")
 
-            # Failure notification (Task 10)
+            #  Failure notification (Task 10)
             if config.notify and config.notify.on_failure:
                 from pipeline_platform.notifications.slack import (
                     send_failure_notification,
@@ -198,6 +201,29 @@ class PipelineExecutor:
     @staticmethod
     def _physical_table_name(config: PipelineConfig) -> str:
         return f"{config.destination.schema}_{config.destination.table}"
+
+    @staticmethod
+    def _config_hash(config: PipelineConfig) -> tuple[str, str]:
+        """
+        Returns (hash, snapshot) for the current config state.
+        The snapshot is a JSON string of the key config fields.
+        The hash is a SHA-256 of that snapshot truncated to 16 chars.
+        """
+        snapshot = {
+            "pipeline_name": config.pipeline_name,
+            "owner": config.owner,
+            "source_type": config.source.type,
+            "source_path": config.source.path,
+            "source_endpoint": config.source.endpoint,
+            "incremental_key": config.source.incremental_key,
+            "destination_schema": config.destination.schema,
+            "destination_table": config.destination.table,
+            "schedule_cron": config.schedule.cron,
+            "load_mode": config.load_mode,
+        }
+        snapshot_str = json.dumps(snapshot, sort_keys=True)
+        config_hash = hashlib.sha256(snapshot_str.encode()).hexdigest()[:16]
+        return config_hash, snapshot_str
 
 
 # DAG generation
