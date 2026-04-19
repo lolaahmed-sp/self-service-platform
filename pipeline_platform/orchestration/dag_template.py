@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pipeline_platform.config_parser import PipelineConfig
 
 
-DAG_TEMPLATE = '''import os
+DAG_TEMPLATE = """import os
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime
@@ -23,7 +25,7 @@ with DAG(
         task_id="run_pipeline",
         bash_command="cd " + _PROJECT_DIR + " && python main.py run --config {config_path}",
     )
-'''
+"""
 
 
 def render_dag_file(config: PipelineConfig) -> str:
@@ -32,3 +34,21 @@ def render_dag_file(config: PipelineConfig) -> str:
         schedule=config.schedule.cron,
         config_path=f"configs/{config.pipeline_name}.yaml",
     )
+
+
+def generate_all_dags(config_dir: str = "configs") -> list[str]:
+    """
+    Generate DAG files for all YAML configs in config_dir.
+    Returns a list of paths to the generated files.
+    """
+    from pipeline_platform.config_parser import load_pipeline_config
+    from pipeline_platform.pipeline_generator import generate_dag_file
+
+    config_path = Path(config_dir)
+    generated = []
+    for yaml_file in sorted(config_path.glob("*.yaml")):
+        config = load_pipeline_config(str(yaml_file))
+        output_path = generate_dag_file(config)
+        generated.append(output_path)
+        print(f"[DAG] Generated: {output_path}")
+    return generated
