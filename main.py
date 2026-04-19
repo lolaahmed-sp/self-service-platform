@@ -7,6 +7,7 @@ from pathlib import Path
 from pipeline_platform.config_parser import load_pipeline_config
 from pipeline_platform.pipeline_generator import PipelineExecutor, generate_dag_file
 from pipeline_platform.warehouse.duckdb_client import DuckDBWarehouse
+from pipeline_platform.validator import reset_registry
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -170,6 +171,7 @@ def main() -> None:
             sys.exit(1)
 
     elif args.command == "run-all":
+        reset_registry()
         yaml_files = sorted(Path(args.config_dir).glob("*.yaml"))
         if not yaml_files:
             print(f"No YAML files found in {args.config_dir}")
